@@ -1,0 +1,19 @@
+Package: markovteller
+Type: Package
+Title: Markov Chains for a Bank Queue
+Version: 0.1.0
+Authors@R:
+    person("Yeline", "Fawa", email = "fawayeline@gmail.com", role = c("aut", "cre"))
+Description: Builds the transition matrix of a Markov chain describing a bank
+    with several tellers and priority customers. Computes the stationary
+    distribution, waiting-time indicators (Little's law) and provides a
+    Monte Carlo simulation for validation. The parameters shipped with the
+    package are fictitious.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.0.0)
+Imports: jsonlite, stats
+Suggests: testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Roxygen: list(markdown = TRUE)
+Config/roxygen2/version: 8.1.1

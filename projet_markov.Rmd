@@ -1,0 +1,221 @@
+---
+title: "Markov Chains Applied to a Bank Queue"
+subtitle: "Bachelor's year 3 (L3 SDIA) project — operations research — fictitious data"
+author: "Yeline Fawa"
+lang: en
+output:
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 7, fig.height = 4, dpi = 150)
+for (f in c("model", "simulation", "scenarios", "day")) source(file.path("src", paste0(f, ".R")), encoding = "UTF-8")
+params <- load_parameters("data/parameters.json")
+fmt <- function(x, d = 2) formatC(x, format = "f", digits = d)
+pct <- function(x, d = 1) paste0(fmt(100 * x, d), "%")
+col_accent <- "#1F4E79"; col_2 <- "#C55A11"
+```
+
+> **Fictitious data.** All numerical parameters come from `data/parameters.json`: they are made up to illustrate the method and do not describe any real bank. All the figures in this document are computed by the R code below.
+
+# 1. The problem
+
+In a bank branch, customers arrive at random and the duration of their transaction varies. When there are too many people for the number of open tellers, the wait gets long. **How many tellers should be opened**, knowing that some customers have priority?
+
+We answer with Markov chains, within the framework of queueing theory, a branch of operations research.
+
+# 2. Theory reminder
+
+**Markov chain.** A sequence of states $X_0, X_1, X_2, \dots$ is a Markov chain if the future depends on the past only through the present:
+
+$$P(X_{n+1}=j \mid X_0,\dots,X_n=i) = P(X_{n+1}=j \mid X_n=i) = p_{ij}.$$
+
+**Transition matrix.** $P=(p_{ij})$ has coefficients $\ge 0$ and **each row sums to 1**: from state $i$, the system necessarily goes somewhere. After $n$ steps, the distribution is $\pi(n)=\pi(0)\,P^n$.
+
+**Stationary distribution.** It is the vector $\pi$ (non-negative, summing to 1) such that $\pi P=\pi$. For a finite irreducible chain it is unique; if the chain is also aperiodic, the distribution converges to $\pi$ from any starting state.
+
+**Little's law.** $L=\lambda\,W$: mean number of customers = arrival rate $\times$ mean time spent in the system.
+
+*Sources: [S1] Wikipedia "Markov chain", [S2] "Little's law", [S3] "Queueing theory" (accessed 4 November 2026); Little (1961), Operations Research, 9(3), 383-387.*
+
+# 3. The model
+
+- One time step = **1 minute**.
+- **State** $(a, b)$: $a$ priority customers and $b$ ordinary customers in the bank, with $a+b \le K$. Here $K = `r params$K`$.
+- Each minute: at most **one arrival** (priority with probability $\lambda_p$, ordinary with probability $\lambda_o$), refused if the bank is full.
+- There are $c$ tellers (from 1 to 5). With $m=\min(a+b,c)$ busy tellers, **each busy teller finishes its service with probability $s=`r fmt(params$s, 2)`$, independently of the others**.
+- **Priority customers are served first**.
+- Arrival and departure within the same minute are independent.
+
+Each row of $P$ is a product of distributions (arrival, then numbers of finished services, which are binomial), each summing to 1: it therefore sums to 1.
+
+# 4. A hand-worked example: 3 states
+
+A single customer class, 1 teller, capacity `r params$hand_example$K`, $\lambda=`r fmt(params$hand_example$lambda, 1)`$, $s=`r fmt(params$hand_example$s, 1)`$.
+
+```{r example3}
+ex <- params$hand_example
+P3 <- build_P_simple(ex$K, ex$lambda, ex$s)
+P3
+rowSums(P3)            # each row sums to 1
+```
+
+After two minutes, the matrix is $P^2$ (the product of $P$ with itself):
+
+```{r p2}
+P3 %*% P3
+```
+
+**Stationary distribution.** By balancing the flows between neighbouring states: $0.30\,\pi_0 = 0.28\,\pi_1$ and $0.18\,\pi_1 = 0.40\,\pi_2$, hence $\pi = (56/143;\ 60/143;\ 27/143)$. The code confirms it:
+
+```{r pi3}
+pi3 <- stationary_distribution(P3)
+round(pi3, 4)
+all.equal(unname(pi3), c(56, 60, 27) / 143)
+all.equal(as.numeric(pi3 %*% P3), unname(pi3))   # pi P = pi
+```
+
+In the long run, the bank is empty **`r pct(pi3[1])`** of the time and full **`r pct(pi3[3])`** of the time.
+
+# 5. The full case: from 1 to 5 tellers
+
+## 5.1 The transition matrix
+
+Example: peak hour, 2 tellers.
+
+```{r matrix}
+lp <- params$periods$peak$lambda_priority
+lo <- params$periods$peak$lambda_ordinary
+P  <- build_P(params$K, c = 2, params$s, lp, lo)
+dim(P)                                  # number of states
+range(rowSums(P))                       # all rows sum to 1
+n <- nrow(P)
+image(1:n, 1:n, t(P[n:1, ]), col = colorRampPalette(c("white", col_accent))(100),
+      xlab = "destination state j", ylab = "origin state i", axes = FALSE,
+      main = "Transition matrix P (peak, 2 tellers)")
+box()
+```
+
+The matrix is sparse: we only move to neighbouring states.
+
+## 5.2 Stationary distribution and indicators
+
+```{r indicators}
+pv  <- stationary_distribution(P)
+ind <- compute_indicators(P, pv, params$K, 2, params$s, lp, lo)
+c(sum = sum(pv), pi_P_equals_pi = isTRUE(all.equal(as.numeric(pv %*% P), unname(pv))))
+unlist(ind[c("p_full", "L", "Wq_p", "Wq_o", "occupancy")])
+```
+
+With 2 tellers at peak time, the bank is full `r pct(ind$p_full)` of the time and ordinary customers wait `r fmt(ind$Wq_o, 1)` minutes on average (Little's law: $W_q = L_q / \lambda_{\text{eff}}$).
+
+## 5.3 Convergence to equilibrium
+
+```{r convergence}
+v <- c(1, rep(0, nrow(P) - 1)); d <- numeric(151)
+d[1] <- 0.5 * sum(abs(v - pv))
+for (k in 1:150) { v <- as.numeric(v %*% P); d[k + 1] <- 0.5 * sum(abs(v - pv)) }
+plot(0:150, d, type = "l", log = "y", lwd = 3, col = col_accent,
+     xlab = "minutes n", ylab = "distance to π (log scale)",
+     main = "Starting from an empty bank")
+grid()
+```
+
+## 5.4 The 10 scenarios
+
+```{r scenarios}
+sc <- run_scenarios(params)
+g_ <- function(per, c) sc$Wq_ordinary[sc$period == per & sc$tellers == c]
+tab <- data.frame(Period = ifelse(sc$period == "off_peak", "Off-peak", "Peak"),
+                  Tellers = sc$tellers, Load = fmt(sc$load, 2),
+                  `Ordinary wait (min)` = fmt(sc$Wq_ordinary, 2),
+                  `Priority wait (min)` = fmt(sc$Wq_priority, 3),
+                  `Bank full` = pct(sc$p_full, 2),
+                  check.names = FALSE)
+knitr::kable(tab, align = "lcccrr")
+```
+
+The *load* is the ratio between arrivals and service capacity, $(\lambda_p+\lambda_o)/(c\,s)$.
+
+```{r graph-scenarios, fig.height = 4}
+op <- par(mfrow = c(1, 2), mar = c(4.5, 4.5, 3, 1))
+ymax <- max(sc$Wq_ordinary) * 1.1
+for (per in c("off_peak", "peak")) {
+  d <- sc[sc$period == per, ]
+  barplot(d$Wq_ordinary, names.arg = d$tellers, xlab = "number of tellers", ylim = c(0, ymax),
+          col = if (per == "off_peak") "#5B8DB8" else col_2,
+          ylab = "wait of ordinary customers (min)", main = paste("Hours:", gsub("_", "-", per)))
+}
+par(op)
+```
+
+**Reading.** At peak time, ordinary customers wait `r fmt(g_("peak",1), 1)` min with 1 teller, `r fmt(g_("peak",2), 1)` min with 2, `r fmt(g_("peak",3), 2)` min with 3, `r fmt(g_("peak",4), 2)` min with 4 and `r fmt(g_("peak",5), 2)` min with 5. Priority customers wait very little in all cases: priority protects them, but it shifts the waiting onto ordinary customers.
+
+```{r needed}
+threshold <- params$wait_threshold_min             # fictitious threshold, chosen for the example
+needed <- required_tellers(sc, threshold)          # smallest number of tellers under the threshold
+needed
+```
+
+With a waiting threshold of `r fmt(threshold, 0)` minute for ordinary customers (fictitious value), **`r needed["off_peak"]` tellers are needed off-peak** and **`r needed["peak"]` at peak time**. A fifth teller would only save `r fmt(g_("peak", needed["peak"]) - g_("peak", 5), 2)` minute at peak time.
+
+# 6. Validation by Monte Carlo simulation
+
+The simulation draws arrivals and departures at random, minute by minute, **without using the matrix $P$**. If it matches $\pi$, the matrix is correct.
+
+```{r simulation}
+sm  <- params$simulation
+sim <- simulate_bank(params$K, 2, params$s, lp, lo, sm$steps, sm$seed, sm$warmup)
+pis <- frequencies_in_order(sim, attr(P, "states"))
+max_gap <- max(abs(pis - pv))
+max_gap
+barplot(rbind(pv, pis), beside = TRUE, col = c(col_accent, col_2), names.arg = seq_along(pv),
+        cex.names = 0.6, xlab = "state index (a, b)", ylab = "probability",
+        main = "Computation (blue) and simulation (orange)")
+```
+
+Over `r format(sim$n_steps, big.mark = ",")` simulated minutes, the maximum gap with the computed distribution is **`r fmt(max_gap, 4)`**: the two methods agree.
+
+## 6.2 A day at the branch, customer by customer
+
+We play a real day (Monday from 8:00 to 16:00, peak from 11:00 to 14:00): each customer is tracked one by one. The customers are the same with 1 and 4 tellers.
+
+```{r day, fig.height = 5.5}
+profile <- day_profile(params)
+d1 <- simulate_customers(params$K, 1, params$s, profile$lp, profile$lo, seed = 2026)
+d4 <- simulate_customers(params$K, 4, params$s, profile$lp, profile$lo, seed = 2026)
+knitr::kable(rbind(summarize_day(d1, 1), summarize_day(d4, 4)))
+op <- par(mfrow = c(2, 1))
+draw_day(d1, 1, profile, params$K)
+draw_day(d4, 4, profile, params$K)
+par(op)
+```
+
+With 1 teller, the room stays full at peak time and customers are rejected. With 4 tellers, almost nobody waits.
+
+# 7. Limits
+
+- At most one arrival per minute (a simplification of continuous time).
+- Geometric service times, with no memory.
+- Patient customers: nobody leaves the queue.
+- Independent arrivals, constant parameters within a period.
+- In the simulated day, a service that has started is never interrupted; the matrix assumes instead that a priority customer can take the place of an ordinary one (see the model documentation).
+- Fictitious data: they would have to be estimated in the field for a real branch.
+
+# 8. Conclusion
+
+A Markov chain with `r nrow(P)` states describes the bank. Its transition matrix makes it possible to compute exactly the stationary distribution, the mean wait and the probability that the bank is full. On our fictitious data, with a waiting threshold of `r fmt(threshold, 0)` minute for ordinary customers, **`r needed["off_peak"]` tellers are enough off-peak and `r needed["peak"]` at peak time**. A fifth teller would bring very little.
+
+# Sources
+
+- [S1] Wikipedia, "Markov chain", https://en.wikipedia.org/wiki/Markov_chain (accessed 4 November 2026).
+- [S2] Wikipedia, "Little's law", https://en.wikipedia.org/wiki/Little%27s_law (accessed 4 November 2026).
+- [S3] Wikipedia, "Queueing theory", https://en.wikipedia.org/wiki/Queueing_theory (accessed 4 November 2026).
+- J. D. C. Little (1961), *A Proof for the Queuing Formula: L = λW*, Operations Research, 9(3), 383-387.
+- To go further: Grinstead and Snell, *Introduction to Probability*, chapter 11.

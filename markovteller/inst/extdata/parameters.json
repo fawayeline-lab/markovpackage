@@ -1,0 +1,14 @@
+{
+  "warning": "FICTITIOUS but realistic DATA, chosen to illustrate the model. They do not come from any real bank.",
+  "time_step_minutes": 1,
+  "K": 8,
+  "s": 0.25,
+  "tellers": [1, 2, 3, 4, 5],
+  "wait_threshold_min": 1,
+  "periods": {
+    "off_peak": { "lambda_priority": 0.05, "lambda_ordinary": 0.20 },
+    "peak": { "lambda_priority": 0.10, "lambda_ordinary": 0.45 }
+  },
+  "hand_example": { "K": 2, "lambda": 0.3, "s": 0.4 },
+  "simulation": { "seed": 123, "steps": 400000, "warmup": 2000 }
+}
